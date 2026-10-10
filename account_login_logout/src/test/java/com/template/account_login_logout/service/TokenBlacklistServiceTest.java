@@ -3,6 +3,7 @@ package com.template.account_login_logout.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.template.account_login_logout.repository.RevokedTokenRepository;
@@ -29,5 +30,14 @@ class TokenBlacklistServiceTest {
         service.blacklist("access-token");
 
         assertThat(service.isBlacklisted("access-token")).isTrue();
+    }
+
+    @Test
+    void scheduledCleanupDeletesExpiredRows() {
+        TokenBlacklistService service = new TokenBlacklistService(revokedTokenRepository, 900_000);
+
+        service.cleanupExpiredTokens();
+
+        verify(revokedTokenRepository).deleteByExpiresAtBefore(any(Instant.class));
     }
 }

@@ -45,4 +45,18 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	outputs.upToDateWhen { false }
+	testLogging {
+		events 'passed', 'skipped', 'failed'
+		showStandardStreams = true
+		exceptionFormat 'full'
+		afterSuite { descriptor, result ->
+			if (!descriptor.parent) {
+				def executed = result.successfulTestCount + result.failedTestCount
+				println "Test summary: ${result.testCount} total, ${executed} executed, " +
+						"${result.successfulTestCount} succeeded, ${result.failedTestCount} failed, " +
+						"${result.skippedTestCount} skipped."
+			}
+		}
+	}
 }
