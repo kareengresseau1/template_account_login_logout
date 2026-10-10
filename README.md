@@ -1,214 +1,234 @@
-# Account Login and Logout Template
+# Account Login and Logout
 
-This project is a Spring Boot REST API template for account authentication. It
-supports logging in with a username or email address, issuing short-lived JWT
-access tokens, refreshing those tokens with a persisted refresh token, and
-logging out by revoking the current session tokens.
+## Repository Goal
 
-The application is intentionally split into controllers, services, security
-components, repositories, entities, and request/response DTOs. Each layer has a
-small responsibility so the authentication flow can be extended without
-putting database, token, and HTTP concerns in the same class.
+This repository provides a backend REST API template for account authentication and session management. It demonstrates registration, password login, signed JWT access and refresh tokens, logout, password reset, email verification, per-device sessions, administrative user management, audit events, rate limiting, and metrics.
 
-## Main Components
+The application is built with Java 21, Spring Boot, Spring Security, Spring Data JPA, JJWT, and Gradle. The default profile uses an in-memory H2 database so the API can be tested locally without installing a database. Redis, SMTP, Prometheus, and OTLP settings are optional for local development; the `shared-infrastructure` profile requires the shared services while retaining H2 for this test phase.
 
-### Web layer
+The API is backend-only. A separate client can call its HTTP endpoints; no web UI is included here.
 
-`AccountController` exposes the authentication API under `/api/auth`:
+## Architecture at a Glance
 
-- `POST /api/auth/login` authenticates credentials and returns access and
-	refresh tokens.
-- `POST /api/auth/refresh` validates and rotates a refresh token, returning a
-	new token pair.
-- `POST /api/auth/logout` revokes the access token from the `Authorization`
-	header and removes the user's persisted refresh token. It can also accept
-	tokens in a `LogoutRequest` body when a header is unavailable.
+- `AccountController` exposes public authentication and account-recovery endpoints under `/api/auth`.
+- `AdminUserController` exposes administrative account endpoints under `/api/admin`.
+- `AccountService`, `RefreshTokenService`, `JwtService`, `TokenBlacklistService`, and `RateLimitService` implement the main authentication workflows.
+- `CustomUserDetailsService` loads accounts for Spring Security. `JwtAuthenticationFilter` authenticates protected requests.
+- `Account`, `RefreshToken`, `RevokedToken`, and `AuditLog` are JPA entities. Their repositories provide database access.
+- `ApiExceptionHandler` maps validation and application exceptions to API error responses.
+- `AuthMetricsService` records authentication metrics. `AuditLogService` stores security events.
+- `EmailService` sends reset and verification messages through the configured SMTP server.
 
-The controller does not check passwords or construct JWT claims itself. It
-delegates authentication to Spring Security's `AuthenticationManager`, token
-creation to `JwtService`, and refresh-token persistence to
-`RefreshTokenService`.
+## Local Setup: H2
 
-The DTOs in `authentication/dto` define the JSON contract:
-
-- `LoginRequest` contains `loginId` and `password`.
-- `AuthResponse` contains `accessToken`, `refreshToken`, `tokenType`, and
-	`expiresIn`.
-- `RefreshTokenRequest` contains the refresh token to exchange.
-- `LogoutRequest` optionally contains an access token and/or refresh token.
-
-Jakarta Bean Validation rejects blank login credentials and blank refresh
-tokens before the controller method runs.
-
-### Account model and data access
-
-`Account` is the JPA entity mapped to the `ACCOUNT` table. It stores the
-account's generated ID, unique username, unique email, and password. Passwords
-should be stored as BCrypt hashes, never as plain text.
-
-`AccountRepository` extends Spring Data's `JpaRepository<Account, Long>`.
-Its `findByUsername` and `findByEmail` methods return `Optional<Account>` so
-callers must handle accounts that do not exist.
-
-`RefreshToken` is another JPA entity. It stores the refresh token string,
-expiration time, and a many-to-one relationship to its `Account` owner.
-`RefreshTokenRepository` provides lookup by token and deletion of all tokens for
-a username.
-
-`AccountService` contains basic account lookup methods and is available as a
-place to add registration, account updates, or account-management rules.
-
-### User lookup and password authentication
-
-`CustomUserDetailsService` implements Spring Security's `UserDetailsService`.
-When Spring receives a login attempt, it calls `loadUserByUsername`. The method
-first searches by username and then by email. It converts the resulting
-`Account` into Spring Security's `UserDetails` object and assigns the
-`ROLE_USER` authority.
-
-`SecurityConfig` exposes a BCrypt `PasswordEncoder` and an
-`AuthenticationManager`. During login, the controller creates a
-`UsernamePasswordAuthenticationToken` from the request credentials and passes
-it to that manager. The manager uses `CustomUserDetailsService` to load the
-account and the password encoder to compare the supplied password with the
-stored hash. Invalid credentials result in an authentication failure instead
-of tokens being issued.
-
-### JWT access tokens
-
-`JwtService` creates and validates signed JWTs using the JJWT library. Each
-token contains the account username as its subject, a token type claim, an
-issued-at time, and an expiration time.
-
-Access tokens are short-lived and are sent by clients on protected requests:
-
-```http
-Authorization: Bearer <access-token>
-```
-
-`JwtAuthenticationFilter` runs before Spring Security's normal username/
-password filter. For each request it:
-
-1. Extracts the bearer token from the `Authorization` header.
-2. Rejects it if `TokenBlacklistService` says it was revoked.
-3. Verifies its signature and expiration through `JwtService`.
-4. Loads the account through `CustomUserDetailsService`.
-5. Places an authenticated `UsernamePasswordAuthenticationToken` in
-	 `SecurityContextHolder`.
-
-After that, controllers can rely on Spring Security's authenticated context
-instead of parsing JWTs themselves. The filter is a Spring component and is
-registered before `UsernamePasswordAuthenticationFilter` by `SecurityConfig`.
-
-### Refresh tokens and logout
-
-`RefreshTokenService` manages the longer-lived refresh token stored in the
-database. On login it associates the generated token with the account. On
-refresh it:
-
-1. Finds the token in `RefreshTokenRepository`.
-2. Checks its database expiration time.
-3. Loads the associated account.
-4. Creates a new access token and refresh token.
-5. Replaces the stored token through rotation.
-
-This means an old refresh token cannot be reused after a successful refresh.
-Missing or expired refresh tokens produce `TokenRefreshException`, which is
-returned as an unauthorized response.
-
-`TokenBlacklistService` keeps revoked access tokens in memory. Logging out
-with an access-token header adds that token to the blacklist and deletes the
-user's refresh token. The blacklist is deliberately simple for this template;
-production deployments should use a shared store such as Redis and should
-expire blacklist entries when the corresponding JWT expires.
-
-## Request Examples
-
-### Login
-
-```http
-POST /api/auth/login
-Content-Type: application/json
-
-{
-	"loginId": "jane@example.com",
-	"password": "correct-password"
-}
-```
-
-Example response:
-
-```json
-{
-	"accessToken": "<jwt>",
-	"refreshToken": "<jwt>",
-	"tokenType": "Bearer",
-	"expiresIn": 900
-}
-```
-
-### Refresh
-
-```http
-POST /api/auth/refresh
-Content-Type: application/json
-
-{
-	"refreshToken": "<refresh-jwt>"
-}
-```
-
-### Logout
-
-The usual form sends the access token in the header:
-
-```http
-POST /api/auth/logout
-Authorization: Bearer <access-jwt>
-```
-
-If a client cannot send the header, it can send either token in the body:
-
-```json
-{
-	"accessToken": "<access-jwt>",
-	"refreshToken": "<refresh-jwt>"
-}
-```
-
-## Security Configuration
-
-The application is stateless: `SecurityConfig` disables CSRF for this token-
-based API, uses `SessionCreationPolicy.STATELESS`, permits the three auth
-endpoints, and requires authentication for every other endpoint. The H2
-console is also permitted for local development and configured to allow its
-same-origin frame.
-
-The local configuration in `application.properties` uses an in-memory H2
-database and creates/updates the schema automatically. JWT settings include:
-
-- `app.jwt.secret`: Base64-encoded signing key.
-- `app.jwt.access-token-expiration`: access-token lifetime in milliseconds.
-- `app.jwt.refresh-token-expiration`: refresh-token lifetime in milliseconds.
-
-Replace the development secret with a strong secret supplied through a secure
-environment-specific configuration before deploying.
-
-## Running the Template
-
-From the `account_login_logout` directory:
+From the repository root:
 
 ```bash
+cd account_login_logout
+./gradlew test
 ./gradlew bootRun
 ```
 
-To run the tests and build the project:
+The default configuration in `src/main/resources/application.properties` uses `jdbc:h2:mem:accounts`. It is an in-memory database: its data is lost when the application stops. Hibernate creates/updates the local schema automatically. `DataInitializer` seeds `jane` with password `password123` only when the database is empty and `DEMO_SEED_ENABLED` is true (the default).
 
-```bash
-./gradlew build
+For local testing, the H2 console is available at `http://localhost:8080/h2-console` with JDBC URL `jdbc:h2:mem:accounts`, username `sa`, and a blank password. It is a development tool; do not expose it outside a local environment.
+
+The default JWT secret is for development only. Replace it before exposing the API beyond local testing. SMTP delivery also requires a reachable SMTP server; without one, reset and verification requests that need to send mail will fail rather than returning a false success.
+
+## Processes and Execution Steps
+
+### 1. Register an account
+
+Endpoint: `POST /api/auth/register`
+
+Example body:
+
+```json
+{
+  "username": "sam",
+  "email": "sam@example.com",
+  "password": "a-long-password"
+}
 ```
 
-The template currently does not include a registration endpoint or seed
-account. Add an account with a BCrypt-encoded password before testing login,
-or add a registration/data-initialization flow that uses the configured
-`PasswordEncoder`.
+Execution flow:
+
+1. `AccountController.register` validates `RegisterRequest`.
+2. `AccountService.register` trims the username/email, checks duplicates, and hashes the password with Spring Security's `PasswordEncoder` (BCrypt).
+3. `AccountRepository` persists the `Account` entity. New accounts have the default `USER` role and are not yet email-verified.
+
+Classes: `RegisterRequest`, `AccountController`, `AccountService`, `SecurityConfig`, `Account`, `AccountRepository`.
+
+### 2. Log in
+
+Endpoint: `POST /api/auth/login`
+
+Example body:
+
+```json
+{
+  "loginId": "sam@example.com",
+  "password": "a-long-password"
+}
+```
+
+Execution flow:
+
+1. `AccountController.login` applies a login-attempt limit using `RateLimitService` (5 attempts per five-minute window, keyed by login ID and client IP).
+2. The controller passes credentials to Spring Security's `AuthenticationManager`.
+3. `CustomUserDetailsService` finds the account by username, then email, and supplies its BCrypt hash and `ROLE_USER`/`ROLE_ADMIN` authority.
+4. If credentials are accepted, `JwtService` creates an access-token/refresh-token pair with a shared session ID.
+5. `RefreshTokenService` stores the refresh token and session metadata (session ID, expiry, IP address, user agent, and timestamps) in `RefreshTokenRepository`.
+6. `AuditLogService` records the login event and `AuthMetricsService` records its result and duration.
+
+The response contains `accessToken`, `refreshToken`, `tokenType`, and `expiresIn`. Send the access token on protected requests as `Authorization: Bearer <accessToken>`.
+
+Classes: `LoginRequest`, `AccountController`, `AuthenticationManager`, `CustomUserDetailsService`, `JwtService`, `RefreshTokenService`, `RefreshToken`, `RefreshTokenRepository`, `RateLimitService`, `AuditLogService`, `AuthMetricsService`.
+
+### 3. Call a protected endpoint
+
+Execution flow for requests carrying a bearer token:
+
+1. `SecurityConfig` routes the request through `JwtAuthenticationFilter`.
+2. `TokenBlacklistService` checks whether the access token's hash has been revoked.
+3. `JwtService` validates the token signature and expiration.
+4. `RefreshTokenService` confirms the token's session ID still exists for the account.
+5. `CustomUserDetailsService` reloads the account; disabled accounts are rejected.
+6. Spring Security puts the authenticated principal and authorities in the security context. The controller can then use `@AuthenticationPrincipal`.
+
+A deleted/revoked session makes its access token unusable immediately, not only after its JWT expires.
+
+Classes: `SecurityConfig`, `JwtAuthenticationFilter`, `JwtService`, `TokenBlacklistService`, `RefreshTokenService`, `CustomUserDetailsService`.
+
+### 4. Refresh a token pair
+
+Endpoint: `POST /api/auth/refresh`
+
+Example body:
+
+```json
+{
+  "refreshToken": "<refresh-token>"
+}
+```
+
+Execution flow:
+
+1. `AccountController.refresh` looks up the supplied token through `RefreshTokenService` and `RefreshTokenRepository`.
+2. `RefreshTokenService.verifyExpiration` rejects and deletes expired refresh tokens.
+3. The controller reloads the account and rejects disabled accounts.
+4. `JwtService` generates a new access token and refresh token with the same session ID.
+5. `RefreshTokenService.rotate` replaces the stored refresh token and updates its expiry/last-use time. The old refresh token cannot be reused.
+
+Classes: `RefreshTokenRequest`, `AccountController`, `RefreshTokenService`, `RefreshTokenRepository`, `JwtService`, `CustomUserDetailsService`.
+
+### 5. Log out or manage device sessions
+
+Logout endpoint: `POST /api/auth/logout`
+
+The usual request sends the access token in the Authorization header. Logout blacklists that access token and removes only the refresh-token session with the matching session ID. Other devices stay logged in. The optional `LogoutRequest` body accepts an access token and/or refresh token; refresh-token deletion is scoped to that token.
+
+To list the signed-in account's sessions, call `GET /api/auth/sessions`. To revoke one session, call `DELETE /api/auth/sessions/{id}`. Both endpoints require a valid access token, and session lookup/revocation is scoped to the authenticated username.
+
+Classes: `AccountController`, `LogoutRequest`, `JwtService`, `TokenBlacklistService`, `RefreshTokenService`, `RefreshTokenRepository`, `RefreshToken`.
+
+### 6. Request a password reset
+
+Endpoint: `POST /api/auth/password-reset/request`
+
+Example body:
+
+```json
+{
+  "email": "sam@example.com"
+}
+```
+
+Execution flow:
+
+1. `AccountController` limits requests to 3 per 15 minutes per normalized email and client IP.
+2. `AccountService` generates a random one-time token, stores only its SHA-256 hash and expiry on the `Account`, and asks `EmailService` to send the raw token to the account email. The response does not reveal whether that email belongs to an account.
+3. The user submits the emailed token to `POST /api/auth/password-reset/confirm` with `email`, `token`, and `newPassword`.
+4. `AccountService` hashes the submitted token and compares it to the stored hash, checks expiry, hashes the new password with BCrypt, clears the reset token, and revokes all of the account's refresh sessions.
+
+Classes: `PasswordResetRequest`, `PasswordResetConfirmRequest`, `AccountController`, `AccountService`, `EmailService`, `RateLimitService`, `Account`, `AccountRepository`, `RefreshTokenService`.
+
+### 7. Verify an email address
+
+Endpoints: `POST /api/auth/email-verification/request` and `POST /api/auth/email-verification/confirm`.
+
+The request endpoint accepts an `email`, applies the same per-email/IP rate limit, creates a hashed, expiring verification token, and sends the raw token using `EmailService`. The confirmation body contains `email` and `token`; `AccountService` verifies the hash/expiry and marks the account's `emailVerified` field true. The current login flow does not require `emailVerified` to be true.
+
+Classes: `EmailVerificationRequest`, `EmailVerificationConfirmRequest`, `AccountController`, `AccountService`, `EmailService`, `RateLimitService`, `Account`, `AccountRepository`.
+
+### 8. Manage users as an administrator
+
+All `/api/admin/**` routes require the `ROLE_ADMIN` authority. `AdminUserController` supports:
+
+- `GET /api/admin/users` to list account summaries.
+- `PUT /api/admin/users/{id}/enable` and `/disable` to change account status. Disabling an account also deletes its refresh sessions.
+- `PUT /api/admin/users/{id}/role?role=USER` or `role=ADMIN` to change its role.
+
+`UserManagementService` applies these changes through `AccountRepository`. Responses contain safe account-summary fields, not password or recovery-token values.
+
+To bootstrap an administrator at startup, set `ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`. If that username exists, it is promoted to `ADMIN`; otherwise, a new account is created with the configured password hashed by BCrypt. If no admin settings are supplied, no new admin is created.
+
+Classes: `AdminUserController`, `UserManagementService`, `SecurityConfig`, `CustomUserDetailsService`, `DataInitializer`, `Account`, `AccountRepository`, `RefreshTokenService`.
+
+### 9. Handle revoked-token records and legacy sessions
+
+`TokenBlacklistService` stores SHA-256 hashes of revoked access tokens in `RevokedTokenRepository`, considers only unexpired records active, and periodically deletes expired rows. Retention is based on the configured access-token lifetime.
+
+At startup, `DataInitializer` deletes refresh-token records with no session ID. This intentionally requires users with sessions created before session IDs were added to sign in again.
+
+Classes: `TokenBlacklistService`, `RevokedToken`, `RevokedTokenRepository`, `DemoApplication`, `DataInitializer`, `RefreshTokenRepository`.
+
+## API and Error Handling
+
+`SecurityConfig` permits registration, login, refresh, logout, password-reset, email-verification, local H2 console, health, and Prometheus endpoints. Other API endpoints require authentication; `/api/admin/**` additionally requires `ROLE_ADMIN`.
+
+Request DTOs under `authentication/dto` use Jakarta Bean Validation. `ApiExceptionHandler` converts validation failures, bad credentials, invalid refresh tokens, rate-limit rejections, and invalid requests into consistent API error responses.
+
+Audit records are written by `AuditLogService` to `AuditLogRepository`. Core login, logout, refresh, and rate-limit events are instrumented by `AuthMetricsService`; Spring Actuator exposes metrics and health endpoints.
+
+## Shared Infrastructure and Monitoring
+
+The default profile is for local testing. To require shared Redis, SMTP, and OTLP endpoints, activate the `shared-infrastructure` profile:
+
+```bash
+cd account_login_logout
+SPRING_PROFILES_ACTIVE=shared-infrastructure ./gradlew bootRun
+```
+
+Configure these environment variables first:
+
+- Redis: `REDIS_HOST`, optional `REDIS_PORT`.
+- SMTP: `MAIL_HOST`, optional `MAIL_PORT` (default `587`), `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`.
+- OpenTelemetry: `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`; optional `TRACING_SAMPLING_PROBABILITY`.
+
+This profile requires Redis for rate limiting (fails closed if Redis is unavailable), enables SMTP authentication/STARTTLS, and enables OTLP metrics/traces. The datasource intentionally remains in-memory H2 for this test phase.
+
+Prometheus metrics are exposed at `/actuator/prometheus`. The application currently permits this path in Spring Security; restrict it to the monitoring network at the local proxy/firewall before deployment. Example Prometheus scraping and alert rules are in `monitoring/prometheus.yml` and `monitoring/prometheus-alerts.yml`. `monitoring/alertmanager.yml.template` is an email receiver template; render it with secret environment values before starting Alertmanager, for example:
+
+```bash
+envsubst < monitoring/alertmanager.yml.template > /tmp/alertmanager.yml
+```
+
+Prometheus scraping and alerting require Prometheus and Alertmanager processes to be deployed separately; these configuration files do not start those services.
+
+## Configuration Notes
+
+- `DEMO_SEED_ENABLED` defaults to `true`; set it to `false` when you do not want the local `jane` demo account seeded.
+- The local H2 database is in-memory and not suitable for retaining data across restarts.
+- Replace the development `app.jwt.secret` before using the service outside local testing.
+- `RATE_LIMIT_REDIS_REQUIRED=true` can also be used without the profile to fail closed when Redis is unavailable. Without it, the local in-memory limiter is the fallback.
+- SMTP, Redis, OTLP, Prometheus, and Alertmanager need to be reachable/configured in the environment where the related process runs.
+
+## Build and Test
+
+```bash
+cd account_login_logout
+./gradlew test --no-daemon
+```
+
+Run the service locally with `./gradlew bootRun --no-daemon`. The application listens on port `8080` by default.
