@@ -24,8 +24,20 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/auth/logout", "/h2-console/**")
+                        .requestMatchers(
+                                "/api/auth/register",
+                                "/api/auth/login",
+                                "/api/auth/refresh",
+                                "/api/auth/logout",
+                                "/api/auth/password-reset/request",
+                                "/api/auth/password-reset/confirm",
+                                "/api/auth/email-verification/request",
+                                "/api/auth/email-verification/confirm",
+                                "/h2-console/**",
+                                "/actuator/health",
+                                "/actuator/prometheus")
                         .permitAll()
+                            .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

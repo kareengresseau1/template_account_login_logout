@@ -1,0 +1,33 @@
+groups:
+  - name: account-authentication
+    rules:
+      - alert: AuthenticationServiceDown
+        expr: up{job="account-login-logout"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Authentication service is unavailable
+          description: Prometheus has been unable to scrape the authentication service for more than two minutes.
+
+      - alert: ElevatedAuthenticationFailures
+        expr: sum(rate(auth_login_failure_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated login failure rate
+          description: More than one failed login per second has been observed for five minutes.
+
+      - alert: ElevatedServerErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count[5m])), 1)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated authentication API error rate
+          description: More than five percent of HTTP requests have returned server errors for five minutes.

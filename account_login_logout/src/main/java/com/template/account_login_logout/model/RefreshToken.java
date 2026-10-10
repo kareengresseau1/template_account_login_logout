@@ -19,7 +19,12 @@ public class RefreshToken {
     private Long id;
 
     private String token;
+    private String sessionKey;
     private Instant expiryDate;
+    private Instant createdAt;
+    private Instant lastUsedAt;
+    private String ipAddress;
+    private String userAgent;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "ACCOUNT_ID", nullable = false)
@@ -37,12 +42,52 @@ public class RefreshToken {
         this.token = token;
     }
 
+    public String getSessionKey() {
+        return sessionKey;
+    }
+
+    public void setSessionKey(String sessionKey) {
+        this.sessionKey = sessionKey;
+    }
+
     public Instant getExpiryDate() {
         return expiryDate;
     }
 
     public void setExpiryDate(Instant expiryDate) {
         this.expiryDate = expiryDate;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public Instant getLastUsedAt() {
+        return lastUsedAt;
+    }
+
+    public void setLastUsedAt(Instant lastUsedAt) {
+        this.lastUsedAt = lastUsedAt;
+    }
+
+    public String getIpAddress() {
+        return ipAddress;
+    }
+
+    public void setIpAddress(String ipAddress) {
+        this.ipAddress = ipAddress;
+    }
+
+    public String getUserAgent() {
+        return userAgent;
+    }
+
+    public void setUserAgent(String userAgent) {
+        this.userAgent = userAgent;
     }
 
     public Account getUser() {

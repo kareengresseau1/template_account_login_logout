@@ -49,7 +49,7 @@ class RefreshTokenServiceTest {
         assertThat(result.getUser()).isSameAs(account);
         assertThat(result.getToken()).isEqualTo("refresh-token");
         assertThat(result.getExpiryDate()).isAfter(Instant.now());
-        verify(refreshTokenRepository).deleteByUser_Username("jane");
+        assertThat(result.getCreatedAt()).isNotNull();
     }
 
     @Test

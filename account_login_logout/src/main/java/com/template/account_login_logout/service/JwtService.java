@@ -6,6 +6,7 @@ import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import java.time.Duration;
 import java.util.Date;
+import java.util.UUID;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -28,11 +29,19 @@ public class JwtService {
     }
 
     public String generateAccessToken(UserDetails user) {
-        return generateToken(user.getUsername(), accessTokenExpirationMillis, "access");
+        return generateAccessToken(user, UUID.randomUUID().toString());
+    }
+
+    public String generateAccessToken(UserDetails user, String sessionKey) {
+        return generateToken(user.getUsername(), accessTokenExpirationMillis, "access", sessionKey);
     }
 
     public String generateRefreshToken(UserDetails user) {
-        return generateToken(user.getUsername(), refreshTokenExpirationMillis, "refresh");
+        return generateRefreshToken(user, UUID.randomUUID().toString());
+    }
+
+    public String generateRefreshToken(UserDetails user, String sessionKey) {
+        return generateToken(user.getUsername(), refreshTokenExpirationMillis, "refresh", sessionKey);
     }
 
     public long getAccessTokenTtlSeconds() {
@@ -41,6 +50,10 @@ public class JwtService {
 
     public String extractUsername(String token) {
         return parseClaims(token).getSubject();
+    }
+
+    public String extractSessionKey(String token) {
+        return parseClaims(token).get("sid", String.class);
     }
 
     public boolean isTokenValid(String token) {
@@ -55,11 +68,12 @@ public class JwtService {
         return refreshTokenExpirationMillis;
     }
 
-    private String generateToken(String username, long expirationMillis, String tokenType) {
+    private String generateToken(String username, long expirationMillis, String tokenType, String sessionKey) {
         Date now = new Date();
         return Jwts.builder()
                 .subject(username)
                 .claim("type", tokenType)
+                .claim("sid", sessionKey)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + expirationMillis))
                 .signWith(signingKey)

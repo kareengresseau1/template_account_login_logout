@@ -1,6 +1,7 @@
 package com.template.account_login_logout.authentication; 
 import com.template.account_login_logout.service.JwtService;
 import com.template.account_login_logout.service.TokenBlacklistService;
+import com.template.account_login_logout.service.RefreshTokenService;
 import com.template.account_login_logout.security.CustomUserDetailsService;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -19,13 +20,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final TokenBlacklistService tokenBlacklistService;
+    private final RefreshTokenService refreshTokenService;
     private final CustomUserDetailsService userDetailsService;
 
     public JwtAuthenticationFilter(JwtService jwtService,
                                    TokenBlacklistService tokenBlacklistService,
+                                   RefreshTokenService refreshTokenService,
                                    CustomUserDetailsService userDetailsService) {
         this.jwtService = jwtService;
         this.tokenBlacklistService = tokenBlacklistService;
+        this.refreshTokenService = refreshTokenService;
         this.userDetailsService = userDetailsService;
     }
 
@@ -49,7 +53,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (jwtService.isTokenValid(token)) {
                 String username = jwtService.extractUsername(token);
                 if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                    String sessionKey = jwtService.extractSessionKey(token);
+                    if (!refreshTokenService.isSessionActive(sessionKey, username)) {
+                        response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Session has been revoked");
+                        return;
+                    }
                     UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                    if (!userDetails.isAccountNonLocked() || !userDetails.isEnabled()) {
+                        response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Account is disabled");
+                        return;
+                    }
                     UsernamePasswordAuthenticationToken auth =
                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                     auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
