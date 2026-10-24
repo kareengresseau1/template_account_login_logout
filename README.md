@@ -29,9 +29,24 @@ cd account_login_logout
 ./gradlew bootRun
 ```
 
-The default configuration in `src/main/resources/application.properties` uses `jdbc:h2:mem:accounts`. It is an in-memory database: its data is lost when the application stops. Hibernate creates/updates the local schema automatically. `DataInitializer` seeds `jane` with password `password123` only when the database is empty and `DEMO_SEED_ENABLED` is true (the default).
+The default configuration in `src/main/resources/application.properties` uses `jdbc:h2:mem:accounts`. It is an in-memory database: its data is lost when the application stops. Hibernate creates/updates the local schema automatically. `DataInitializer` seeds `jane` and `alex` with password `password123` when `DEMO_SEED_ENABLED` is true (the default).
 
 For local testing, the H2 console is available at `http://localhost:8080/h2-console` with JDBC URL `jdbc:h2:mem:accounts`, username `sa`, and a blank password. It is a development tool; do not expose it outside a local environment.
+
+### Persistent local demo database
+
+To keep test accounts between restarts, activate the `demo` profile. It uses a local H2 file at `account_login_logout/data/accounts` (ignored by Git), and seeds `jane` and `alex` with password `password123`. To also seed your own reset-test account, set its username, email, and initial password on first startup:
+
+```bash
+cd account_login_logout
+SPRING_PROFILES_ACTIVE=demo \
+DEMO_ACCOUNT_USERNAME=krgresseau \
+DEMO_ACCOUNT_EMAIL=your-email@example.com \
+DEMO_ACCOUNT_PASSWORD='choose-a-temporary-password' \
+./gradlew bootRun
+```
+
+The configured account is created only if its username is not already in the database. Its password is stored as a BCrypt hash; the raw password is not written to the repository. You can omit the three `DEMO_ACCOUNT_*` variables on later starts. Use the seeded usernames or emails as the `loginId` for login. For password-reset tests, configure a working SMTP sender in the local environment; reset requests send the one-time token by email.
 
 The default JWT secret is for development only. Replace it before exposing the API beyond local testing. SMTP delivery also requires a reachable SMTP server; without one, reset and verification requests that need to send mail will fail rather than returning a false success.
 
@@ -219,10 +234,68 @@ Prometheus scraping and alerting require Prometheus and Alertmanager processes t
 ## Configuration Notes
 
 - `DEMO_SEED_ENABLED` defaults to `true`; set it to `false` when you do not want the local `jane` demo account seeded.
-- The local H2 database is in-memory and not suitable for retaining data across restarts.
+- The default H2 database is in-memory; use `SPRING_PROFILES_ACTIVE=demo` for a local file-backed database.
+- Demo accounts use the shared password `password123`; use them only for local testing.
 - Replace the development `app.jwt.secret` before using the service outside local testing.
 - `RATE_LIMIT_REDIS_REQUIRED=true` can also be used without the profile to fail closed when Redis is unavailable. Without it, the local in-memory limiter is the fallback.
 - SMTP, Redis, OTLP, Prometheus, and Alertmanager need to be reachable/configured in the environment where the related process runs.
+
+### Test the login 
+
+- Go to the class account_login_logout/src/main/java/com/template/account_login_logout/DataInitializer.java 
+- In the run method, add a user with an existing real email address.
+
+```java  
+    @Override
+    public void run(ApplicationArguments args) {
+        refreshTokenRepository.deleteBySessionKeyIsNull();
+
+        if (seedDemoAccount) {
+            createDemoAccountIfMissing("jane", "jane@example.com", "password123");
+            createDemoAccountIfMissing("alex", "alex@example.com", "password123"); 
+            createDemoAccountIfMissing("kareen", "krgresseau@gmail.com", "password456");    <— Create an account here with a real email address
+            seedConfiguredDemoAccount();
+        }
+
+``` 
+- In a new terminal, execute the following command. Make sure to use a username and password defined in the class DataInitializer.java
+
+```shell 
+curl -i -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"loginId”:”your_username,”password”:”your_password”}’ 
+``` 
+
+This command should return a 200 HTTP response code with an access token. Copy the access token somewhere safe because it’ll be needed to test the logout.  
+
+
+### Test the logout 
+- In a terminal, execute the following command. Replace “YOUR_ACCESS_TOKEN” by the access token that was generated with the login command without the quotation marks.
+
+```shell 
+curl -i -X POST http://localhost:8080/api/auth/logout \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+``` 
+
+### Test the password reset 
+- In a terminal, execute the following command. Replace “your_email_address” with the email address for the account you want to reset the password for. It has to be a real email address
+
+```shell 
+curl -i -X POST http://localhost:8080/api/auth/password-reset/request \
+  -H 'Content-Type: application/json' \
+  -d '{"email”:”your_email”_address}’ 
+```
+
+- Go to your email inbox and look for the password reset email. In this email you will be given a new token. 
+- In the terminal, execute the following command. Replace “PASTE_TOKEN_HERE” with the token you received in the email. Replace “your-new-password” by a new password of your choice.
+
+```shell  
+curl -i -X POST http://localhost:8080/api/auth/password-reset/confirm \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"krgresseau@gmail.com","token":"PASTE_TOKEN_HERE","newPassword":"your-new-password"}'
+``` 
+- Try to login with the new password to see if the reset was successful. 
+
 
 ## Build and Test
 

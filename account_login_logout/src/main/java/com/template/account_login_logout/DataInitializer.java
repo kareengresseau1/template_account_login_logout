@@ -19,6 +19,9 @@ public class DataInitializer implements ApplicationRunner {
     private final String adminEmail;
     private final String adminPassword;
     private final boolean seedDemoAccount;
+    private final String demoAccountUsername;
+    private final String demoAccountEmail;
+    private final String demoAccountPassword;
 
     public DataInitializer(AccountRepository accountRepository,
                            RefreshTokenRepository refreshTokenRepository,
@@ -26,7 +29,10 @@ public class DataInitializer implements ApplicationRunner {
                            @Value("${app.admin.username:}") String adminUsername,
                            @Value("${app.admin.email:}") String adminEmail,
                            @Value("${app.admin.password:}") String adminPassword,
-                           @Value("${app.demo-seed.enabled:true}") boolean seedDemoAccount) {
+                           @Value("${app.demo-seed.enabled:true}") boolean seedDemoAccount,
+                           @Value("${app.demo-account.username:}") String demoAccountUsername,
+                           @Value("${app.demo-account.email:}") String demoAccountEmail,
+                           @Value("${app.demo-account.password:}") String demoAccountPassword) {
         this.accountRepository = accountRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.passwordEncoder = passwordEncoder;
@@ -34,18 +40,20 @@ public class DataInitializer implements ApplicationRunner {
         this.adminEmail = adminEmail;
         this.adminPassword = adminPassword;
         this.seedDemoAccount = seedDemoAccount;
+        this.demoAccountUsername = demoAccountUsername;
+        this.demoAccountEmail = demoAccountEmail;
+        this.demoAccountPassword = demoAccountPassword;
     }
 
     @Override
     public void run(ApplicationArguments args) {
         refreshTokenRepository.deleteBySessionKeyIsNull();
 
-        if (seedDemoAccount && accountRepository.count() == 0) {
-            Account account = new Account();
-            account.setUsername("jane");
-            account.setEmail("jane@example.com");
-            account.setPassword(passwordEncoder.encode("password123"));
-            accountRepository.save(account);
+        if (seedDemoAccount) {
+            createDemoAccountIfMissing("jane", "jane@example.com", "password123");
+            createDemoAccountIfMissing("alex", "alex@example.com", "password123"); 
+            createDemoAccountIfMissing("kareen", "krgresseau@gmail.com", "password456");
+            seedConfiguredDemoAccount();
         }
 
         if (!adminUsername.isBlank()) {
@@ -72,5 +80,34 @@ public class DataInitializer implements ApplicationRunner {
         admin.setEmailVerified(true);
         admin.setRole("ADMIN");
         return admin;
+    }
+
+    private void seedConfiguredDemoAccount() {
+        boolean hasAnyDemoCredential = !demoAccountUsername.isBlank()
+                || !demoAccountEmail.isBlank()
+                || !demoAccountPassword.isBlank();
+        if (!hasAnyDemoCredential) {
+            return;
+        }
+        if (demoAccountUsername.isBlank() || demoAccountEmail.isBlank() || demoAccountPassword.isBlank()) {
+            throw new IllegalStateException(
+                    "To seed a demo account, set DEMO_ACCOUNT_USERNAME, DEMO_ACCOUNT_EMAIL, and DEMO_ACCOUNT_PASSWORD");
+        }
+        createDemoAccountIfMissing(demoAccountUsername, demoAccountEmail, demoAccountPassword);
+    }
+
+    private void createDemoAccountIfMissing(String username, String email, String rawPassword) {
+        if (accountRepository.findByUsername(username).isPresent()) {
+            return;
+        }
+        if (accountRepository.existsByEmail(email)) {
+            throw new IllegalStateException("Demo account email is already assigned to another account");
+        }
+        Account account = new Account();
+        account.setUsername(username);
+        account.setEmail(email);
+        account.setPassword(passwordEncoder.encode(rawPassword));
+        account.setEmailVerified(true);
+        accountRepository.save(account);
     }
 }

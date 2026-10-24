@@ -46,7 +46,10 @@ class DataInitializerTest {
                 "admin",
                 "admin@example.com",
                 "strong-admin-password",
-                false);
+                false,
+                "",
+                "",
+                "");
 
         initializer.run(arguments);
 
@@ -70,10 +73,46 @@ class DataInitializerTest {
                 "admin",
                 "",
                 "",
-                false);
+                false,
+                "",
+                "",
+                "");
 
         assertThatThrownBy(() -> initializer.run(arguments))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ADMIN_EMAIL");
+    }
+
+    @Test
+    void seedsDemoAccountsIncludingConfiguredAccount() {
+        when(accountRepository.findByUsername(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(java.util.Optional.empty());
+        when(accountRepository.existsByEmail(org.mockito.ArgumentMatchers.anyString())).thenReturn(false);
+        when(passwordEncoder.encode(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(invocation -> "encoded-" + invocation.getArgument(0));
+        when(accountRepository.save(any(Account.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        DataInitializer initializer = new DataInitializer(
+                accountRepository,
+                refreshTokenRepository,
+                passwordEncoder,
+                "",
+                "",
+                "",
+                true,
+                "krgresseau",
+                "krgresseau@gmail.com",
+                "temporary-password");
+
+        initializer.run(arguments);
+
+        ArgumentCaptor<Account> savedAccounts = ArgumentCaptor.forClass(Account.class);
+        verify(accountRepository, org.mockito.Mockito.times(3)).save(savedAccounts.capture());
+        assertThat(savedAccounts.getAllValues())
+                .extracting(Account::getUsername)
+                .containsExactly("jane", "alex", "krgresseau");
+        assertThat(savedAccounts.getAllValues().get(2).getEmail()).isEqualTo("krgresseau@gmail.com");
+        assertThat(savedAccounts.getAllValues().get(2).getPassword()).isEqualTo("encoded-temporary-password");
+        assertThat(savedAccounts.getAllValues().get(2).isEmailVerified()).isTrue();
     }
 }
